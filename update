@@ -43,7 +43,7 @@ done
 
 ssh_cmd()
 {
-sshpass -panalog ssh $HOST "$1" > /dev/null 2>&1
+sshpass -panalog ssh $HOST "$1" 2>/dev/null
 if [ "$?" -ne "0" ] ; then
   echo ssh command $1 failed
   exit
@@ -102,6 +102,7 @@ echo "Device : $dev"
 echo "Serial : $SERIAL"
 echo updating kernel and ramfs
 echo "*** DO NOT UNPLUG"
+
 cp ./pluto.frm $disk && eject $dev && sleep 1
 wait_for_pluto 300
 reset_pluto
@@ -113,9 +114,14 @@ reset_pluto
 
 there=$(ssh_cmd '/usr/sbin/fw_printenv' | grep attr_name | wc -l)
 if [ "$there" -gt "0" ] ; then
-    ssh_cmd '/usr/sbin/fw_setenv attr_name compatible'
-    ssh_cmd '/usr/sbin/fw_setenv attr_val ad9364'
-    reset_pluto
+    ssh_cmd 'echo 0x037 > /sys/kernel/debug/iio/iio:device1/direct_reg_access'
+    device_id=$(ssh_cmd 'cat /sys/kernel/debug/iio/iio:device1/direct_reg_access')
+    if [ "p${device_id}" = "p0xA" ] ; then
+	echo updating to AD9364
+        ssh_cmd '/usr/sbin/fw_setenv attr_name compatible'
+        ssh_cmd '/usr/sbin/fw_setenv attr_val ad9364'
+        reset_pluto
+    fi
 fi 
 
 echo Done
