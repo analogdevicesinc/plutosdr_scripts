@@ -1,0 +1,11 @@
+# This is the default ssh_config for the PlutoSDR
+# This file should be located in ~/.ssh/config or /etc/ssh/ssh_config
+# If you update the IP number, you need to do the same in this file
+Host plutosdr
+	HostName 192.168.2.1
+	UserKnownHostsFile=/dev/null
+	HostKeyAlias plutosdr
+	StrictHostKeyChecking=no
+	CheckHostIP no
+	User root
+	ChallengeResponseAuthentication no
