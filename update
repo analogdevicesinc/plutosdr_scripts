@@ -1,0 +1,105 @@
+#!/bin/sh
+
+# takes no arguments, 
+# updates the ./pluto.frm and ./boot.frm from the PlutoSDR firmware
+# on a linix machine. Tested on debian.
+# also assumes a default ./ssh/config file for Pluto (per the wiki)
+
+wait_for_pluto()
+{
+wait=0.5
+time=$(echo $1 / $wait | bc)
+i=0
+until grep -qs 'PlutoSDR' /proc/mounts ;
+do
+  if [ "`ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR | wc -l`" != "0" ] ; then
+    # try to mount it
+    udisksctl mount -b /dev/$(ls -l /dev/disk/by-label/ | grep PlutoSDR | awk -F/ '{print $NF}') &>/dev/null
+  fi
+  sleep $wait
+  i=$(expr $i + 1)
+  if [ "$i" -gt "$time" ] ; then
+    echo timed out $i
+    exit
+  fi
+done
+
+dev=/dev/$(ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR  | awk -F "/" '{print $NF}' | sed -e 's:[0-9]$::')
+disk=$(grep ${dev} /proc/mounts | awk '{print $2}')
+
+# network can come up much later, and we need to wait for that as well
+wait=$(echo "$wait * 1000" | bc)
+while ! ping -c 1 -w $wait 192.168.2.1 2>&1 > /dev/null
+do
+  i=$(expr $i + 1)
+  if [ "$i" -gt "$time" ] ; then
+    echo timed out $i
+    exit
+  fi
+done
+}
+
+reset_pluto()
+{
+sshpass -panalog ssh pluto '/usr/sbin/pluto_reboot reset' > /dev/null 2>&1
+sleep 3
+wait_for_pluto 10
+}
+
+command sshpass >/dev/null 2>&1
+if [ "$?" -ne "0" ] ; then
+  echo sorry, your distribution needs to have 'sshpass' installed
+  echo try \'sudo apt-get install sshpass\' OR \'sudo yum install sshpass\'
+  exit
+fi
+
+#Make sure a device is plugged in, and you can find it
+wait_for_pluto 30
+
+dd if=${dev} of=/dev/null count=1 bs=1 > /dev/null 2>&1
+if [ "$?" -ne "0" ] ; then
+  echo you do not have permissions to eject the disk
+  if [ "$(id -u)" != "0" ]; then
+    echo maybe you need to run as root?
+  fi
+  exit
+fi
+
+if [ ! -r ./pluto.frm ] ; then
+  echo "can not find the pluto.frm in the currect directory"
+  exit
+fi
+if [ ! -r ./boot.frm ] ; then
+  echo "can not find the boot.frm in the currect directory"
+  exit
+fi
+
+SERIAL=$(grep -A 1 "<td>Serial</td>" /media/analog/PlutoSDR/info.html | \
+		tail -1 | \
+		sed -e 's/^.*<td>//' -e 's/<\/td>//')
+
+echo updating kernel and ramfs on 
+echo "Disk   : $disk"
+echo "Device : $dev"
+echo "Serial : $SERIAL"
+echo DO NOT UNPLUG
+cp ./pluto.frm $disk && eject $dev && sleep 1
+wait_for_pluto 300
+echo rebooting to new image
+reset_pluto
+echo updating FPGA image and bootloaders on $disk $dev
+echo DO NOT UNPLUG
+cp ./boot.frm $disk && eject $dev && sleep 1
+wait_for_pluto 120
+reset_pluto
+
+there=$(sshpass -panalog ssh pluto '/usr/sbin/fw_printenv' | grep attr_name | wc -l)
+if [ "$there" -gt "0" ] ; then
+    sshpass -panalog ssh pluto '/usr/sbin/fw_setenv attr_name compatible'
+    sshpass -panalog ssh pluto '/usr/sbin/fw_setenv attr_val ad9364'
+    reset_pluto
+fi 
+
+echo Done
+
+
