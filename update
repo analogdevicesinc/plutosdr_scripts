@@ -5,6 +5,8 @@
 # on a linix machine. Tested on debian.
 # also assumes a default ./ssh/config file for Pluto (per the wiki)
 
+HOST=plutosdr
+
 wait_for_pluto()
 {
 wait=0.5
@@ -14,7 +16,7 @@ until grep -qs 'PlutoSDR' /proc/mounts ;
 do
   if [ "`ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR | wc -l`" != "0" ] ; then
     # try to mount it
-    udisksctl mount -b /dev/$(ls -l /dev/disk/by-label/ | grep PlutoSDR | awk -F/ '{print $NF}') &>/dev/null
+    udisksctl mount -b /dev/$(ls -l /dev/disk/by-label/ | grep PlutoSDR | awk -F/ '{print $NF}') > /dev/null 2>&1
   fi
   sleep $wait
   i=$(expr $i + 1)
@@ -39,9 +41,19 @@ do
 done
 }
 
+ssh_cmd()
+{
+sshpass -panalog ssh $HOST "$1" > /dev/null 2>&1
+if [ "$?" -ne "0" ] ; then
+  echo ssh command $1 failed
+  exit
+fi
+}
+
 reset_pluto()
 {
-sshpass -panalog ssh pluto '/usr/sbin/pluto_reboot reset' > /dev/null 2>&1
+echo resetting pluto at ${dev} ${disk} $HOST
+ssh_cmd '/usr/sbin/pluto_reboot reset'
 sleep 3
 wait_for_pluto 10
 }
@@ -58,7 +70,7 @@ wait_for_pluto 30
 
 dd if=${dev} of=/dev/null count=1 bs=1 > /dev/null 2>&1
 if [ "$?" -ne "0" ] ; then
-  echo you do not have permissions to eject the disk
+  echo you do not have permissions to eject the disk: $dev
   if [ "$(id -u)" != "0" ]; then
     echo maybe you need to run as root?
   fi
@@ -74,29 +86,35 @@ if [ ! -r ./boot.frm ] ; then
   exit
 fi
 
+# Look in the common places
+if [ "$(grep $HOST ~/.ssh/config 2>/dev/null  | wc -l)" -eq "0" \
+  -a "$(grep $HOST /etc/ssh/ssh_config 2>/dev/null  | wc -l)" -eq "0" 	] ; then
+  echo can not find $HOST in either ~/.ssh/config or /etc/ssh/ssh_config
+  echo remember - I am running as root, so ~/ might be /home/root/ (try sudo -s)
+fi
+
 SERIAL=$(grep -A 1 "<td>Serial</td>" /media/analog/PlutoSDR/info.html | \
 		tail -1 | \
 		sed -e 's/^.*<td>//' -e 's/<\/td>//')
 
-echo updating kernel and ramfs on 
 echo "Disk   : $disk"
 echo "Device : $dev"
 echo "Serial : $SERIAL"
-echo DO NOT UNPLUG
+echo updating kernel and ramfs
+echo "*** DO NOT UNPLUG"
 cp ./pluto.frm $disk && eject $dev && sleep 1
 wait_for_pluto 300
-echo rebooting to new image
 reset_pluto
 echo updating FPGA image and bootloaders on $disk $dev
-echo DO NOT UNPLUG
+echo "*** DO NOT UNPLUG"
 cp ./boot.frm $disk && eject $dev && sleep 1
 wait_for_pluto 120
 reset_pluto
 
-there=$(sshpass -panalog ssh pluto '/usr/sbin/fw_printenv' | grep attr_name | wc -l)
+there=$(ssh_cmd '/usr/sbin/fw_printenv' | grep attr_name | wc -l)
 if [ "$there" -gt "0" ] ; then
-    sshpass -panalog ssh pluto '/usr/sbin/fw_setenv attr_name compatible'
-    sshpass -panalog ssh pluto '/usr/sbin/fw_setenv attr_val ad9364'
+    ssh_cmd '/usr/sbin/fw_setenv attr_name compatible'
+    ssh_cmd '/usr/sbin/fw_setenv attr_val ad9364'
     reset_pluto
 fi 
 
