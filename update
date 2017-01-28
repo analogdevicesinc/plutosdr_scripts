@@ -5,57 +5,74 @@
 # on a linix machine. Tested on debian.
 # also assumes a default ./ssh/config file for Pluto (per the wiki)
 
-HOST=plutosdr
+pluto_dev()
+{
+	echo $(ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR | awk -F/ '{print $NF}')
+}
 
+# takes one argument - the number of seconds (as an int) to wait
 wait_for_pluto()
 {
-wait=0.5
-time=$(echo $1 / $wait | bc)
-i=0
-until grep -qs 'PlutoSDR' /proc/mounts ;
-do
-  if [ "`ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR | wc -l`" != "0" ] ; then
-    # try to mount it
-    udisksctl mount -b /dev/$(ls -l /dev/disk/by-label/ | grep PlutoSDR | awk -F/ '{print $NF}') > /dev/null 2>&1
-  fi
-  sleep $wait
-  i=$(expr $i + 1)
-  if [ "$i" -gt "$time" ] ; then
-    echo timed out $i
-    exit
-  fi
-done
+    time=$1
+    i=0
+    until grep -qs 'PlutoSDR' /proc/mounts ;
+    do
+	dev=$(pluto_dev)
+	if [ "`echo ${dev}| wc -c`" -gt "1" ] ; then
+	    # try to mount it
+	    udisksctl mount -b /dev/${dev} > /dev/null 2>&1
+	fi
 
-dev=/dev/$(ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR  | awk -F "/" '{print $NF}' | sed -e 's:[0-9]$::')
-disk=$(grep ${dev} /proc/mounts | awk '{print $2}')
+	# pause for a bit
+	sleep 1
+	i=$(expr $i + 1)
+	if [ "$i" -gt "$time" ] ; then
+	    echo timed out waiting for PlutoSDR to be mounted $i
+	    exit
+        fi
+    done
 
-# network can come up much later, and we need to wait for that as well
-wait=$(echo "$wait * 1000" | bc)
-while ! ping -c 1 -w $wait 192.168.2.1 2>&1 > /dev/null
-do
-  i=$(expr $i + 1)
-  if [ "$i" -gt "$time" ] ; then
-    echo timed out $i
-    exit
-  fi
-done
+    dev=/dev/$(pluto_dev | sed -e 's:[0-9]$::')
+    disk=$(grep ${dev} /proc/mounts | awk '{print $2}')
+    ipaddr=$(grep "^ipaddr =" ${disk}/config.txt | awk '{print $NF}')
+
+    # Just because the drive is up, doesn't mean the host kernel
+    # has loaded/initialized the network - which can come up later
+    # so we need to wait for that as well
+    while ! $(ping -c 1 -w 1 -W 1 ${ipaddr} 2>&1 > /dev/null)
+    do
+	i=$(expr $i + 1)
+	if [ "$i" -gt "$time" ] ; then
+	    echo timed out waiting for network to come up $i
+	    exit
+	fi
+	# do not need a sleep in this loop, the pause is in the ping command
+    done
 }
 
 ssh_cmd()
 {
-sshpass -panalog ssh $HOST "$1" 2>/dev/null
-if [ "$?" -ne "0" ] ; then
-  echo ssh command $1 failed
-  exit
-fi
+    sshpass -v -panalog ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oCheckHostIP=no root@${ipaddr} "$1" 2>/dev/null
+    if [ "$?" -ne "0" ] ; then
+	echo ssh command $1 failed
+	exit
+    fi
 }
 
 reset_pluto()
 {
-echo resetting pluto at ${dev} ${disk} $HOST
-ssh_cmd '/usr/sbin/pluto_reboot reset'
-sleep 3
-wait_for_pluto 10
+    echo resetting pluto at ${dev} ${disk} ${ipaddr}
+    ssh_cmd '/usr/sbin/pluto_reboot reset'
+    sleep 2
+    wait_for_pluto 10
+}
+
+# find the argument in the info.html file
+pluto_value()
+{
+    echo $(grep -A 1 "<td>${1}</td>" ${disk}/info.html | \
+	tail -1 | \
+	sed -e 's/^.*<td>//' -e 's/<\/td>//')
 }
 
 command sshpass >/dev/null 2>&1
@@ -65,47 +82,96 @@ if [ "$?" -ne "0" ] ; then
   exit
 fi
 
+if [ ! -r ./pluto.frm ] ; then
+    echo "can not find the pluto.frm in the currect directory, attemping to download"
+    file=$(curl -s https://api.github.com/repos/analogdevicesinc/plutosdr-fw/releases/latest | grep 'browser_' | cut -d\" -f4)
+    if [ "x$file" != "x" ] ; then
+	wget -q $file
+	file=$(echo $file|awk -F/ '{print $NF}')
+	unzip -q ${file}
+	version=$(pluto_value "Build")
+	echo installed version is: ${version}
+	echo downloaded version is ${file}
+	echo -n "are you sure you want to upgrade? (y/n): "
+	read answer
+	finish="-1"
+	while [ "$finish" = '-1' ]
+	do
+	    finish="1"
+	    if [ "$answer" = '' ]; then
+		answer=""
+	    else
+		case $answer in
+		    y | Y | yes | YES ) answer="y";;
+		    n | N | no | NO ) answer="n";;
+		    *) finish="-1";
+		       echo -n 'Invalid response -- please reenter:';
+		       read answer;;
+		esac
+	    fi
+	done
+	if [ "$answer" = "n" ] ; then
+	    echo "OK, quiting without upgrade"
+	    exit
+	fi
+	echo "upgrading"
+    else
+	echo failed to download
+	exit
+    fi
+fi
+if [ ! -r ./boot.frm ] ; then
+    echo "can not find the boot.frm in the currect directory"
+    exit
+fi
+
 #Make sure a device is plugged in, and you can find it
+
+echo Please plug in a PlutoSDR
+# try DFU, in case something is bricked
+command dfu-util -V >/dev/null 2>&1
+if [ "$?" = "0" ] ; then
+    if [ "$(dfu-util -l -d 0456:b673,0456:b674 | wc -l)" -gt "8" ] ; then
+	echo "recovering PlutoSDR via DFU"
+	echo "*** DO NOT UNPLUG"
+        dfu-util -d 0456:b673,0456:b674 -D pluto.dfu -a pluto.dfu >/dev/null
+	if [ "$?" -ne "0" ] ; then
+	    echo "found, and tried programming dfu, and failed"
+	    if [ "$(id -u)" != "0" ]; then
+		echo maybe you need to run as root?
+	    fi
+	    exit
+        fi
+	echo power cycle device, and then run again
+	exit
+    fi
+else
+    echo dfu-util not installed, not checking for non-booting device
+fi
+
 wait_for_pluto 30
 
 dd if=${dev} of=/dev/null count=1 bs=1 > /dev/null 2>&1
 if [ "$?" -ne "0" ] ; then
-  echo you do not have permissions to eject the disk: $dev
-  if [ "$(id -u)" != "0" ]; then
-    echo maybe you need to run as root?
-  fi
-  exit
+    echo you do not have permissions to eject the disk: $dev
+    if [ "$(id -u)" != "0" ]; then
+	echo maybe you need to run as root?
+    fi
+    exit
 fi
 
-if [ ! -r ./pluto.frm ] ; then
-  echo "can not find the pluto.frm in the currect directory"
-  exit
-fi
-if [ ! -r ./boot.frm ] ; then
-  echo "can not find the boot.frm in the currect directory"
-  exit
-fi
-
-# Look in the common places
-if [ "$(grep $HOST ~/.ssh/config 2>/dev/null  | wc -l)" -eq "0" \
-  -a "$(grep $HOST /etc/ssh/ssh_config 2>/dev/null  | wc -l)" -eq "0" 	] ; then
-  echo can not find $HOST in either ~/.ssh/config or /etc/ssh/ssh_config
-  echo remember - I am running as root, so ~/ might be /home/root/ (try sudo -s)
-fi
-
-SERIAL=$(grep -A 1 "<td>Serial</td>" /media/analog/PlutoSDR/info.html | \
-		tail -1 | \
-		sed -e 's/^.*<td>//' -e 's/<\/td>//')
+SERIAL=$(pluto_value "Serial")
 
 echo "Disk   : $disk"
 echo "Device : $dev"
 echo "Serial : $SERIAL"
+echo "IPaddr : $ipaddr"
 echo updating kernel and ramfs
 echo "*** DO NOT UNPLUG"
-
 cp ./pluto.frm $disk && eject $dev && sleep 1
 wait_for_pluto 300
 reset_pluto
+
 echo updating FPGA image and bootloaders on $disk $dev
 echo "*** DO NOT UNPLUG"
 cp ./boot.frm $disk && eject $dev && sleep 1
