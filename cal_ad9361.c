@@ -13,6 +13,7 @@
 #include <string.h>
 #include <errno.h>
 #include <math.h>
+#include <unistd.h>
 #include <values.h>
 #include <complex.h>
 #include <fftw3.h>
@@ -28,8 +29,9 @@ static const struct option options[] = {
 	{"buffer-size", required_argument, 0, 'b'},
 	{"samples", required_argument, 0, 's' },
 	{"sample-rate", required_argument, 0, 'S'},
-	{"Rx LO frequency", required_argument, 0, 'r'},
-	{"Tx LO frequency", required_argument, 0, 't'},
+	{"rxlo-freq", required_argument, 0, 'r'},
+	{"txlo-freq", required_argument, 0, 't'},
+	{"external-tone", required_argument, 0, 'e'},
 	{"timeout", required_argument, 0, 'T'},
 	{"auto", no_argument, 0, 'a'},
 	{0, 0, 0, 0},
@@ -41,8 +43,9 @@ static const char *options_descriptions[] = {
 	"Size of capture buffers. Default is 1048576.",
 	"Number of buffers to capture, 0 = infinite. Default is 1",
 	"Sample rate. Default is 30720000.",
-	"Rx LO frequency. Default is 2000000000 (2GHz). 0 is off",
-	"Tx LO frequency. Default is 0. 0 is off",
+	"Rx LO frequency in Hz. Default is 0. 0 is off",
+	"Tx LO frequency in Hz. Default is 0. 0 is off",
+	"External Tone in Hz. Default is 0. 0 is off"
 	"Buffer timeout in milliseconds. 0 = no timeout",
 	"Scan for available contexts and if only one is available use it.",
 };
@@ -224,7 +227,19 @@ err_free_ctx:
 	return ctx;
 }
 
-static bool iio_set_attribute(char * device, char * channel, char * attribute, char * buffer)
+struct write_l {
+	char *device;
+	char *channel;
+	bool in_out;
+	char *attribute;
+	char *value;
+};
+
+struct write_l write_log[128];
+static int wl_index = 0;
+
+static bool iio_set_attribute(char * device, char * channel, bool in_out,
+		char * attribute, char * buffer, bool log)
 {
 	struct iio_device *dev;
 	struct iio_channel *chan;
@@ -239,9 +254,7 @@ static bool iio_set_attribute(char * device, char * channel, char * attribute, c
 		return false;
 	}
 
-	chan = iio_device_find_channel(dev, channel, true);
-	if (!chan)
-		chan = iio_device_find_channel(dev, channel, false);
+	chan = iio_device_find_channel(dev, channel, in_out);
 	if (!chan) {
 		fprintf(stderr, "%s channel not found in %s\n", channel, device);
 		iio_context_destroy(ctx);
@@ -256,51 +269,27 @@ static bool iio_set_attribute(char * device, char * channel, char * attribute, c
 	}
 
 	ret = iio_channel_attr_read(chan, attribute, buf, sizeof(buf));
-	if (ret > 0)
-		printf("%s %s %s was : %s\n", device, channel, attribute, buf);
+	if (ret > 0) {
+		if (log) {
+			write_log[wl_index].device = strdup(device);
+			write_log[wl_index].channel = strdup(channel);
+			write_log[wl_index].in_out = in_out;
+			write_log[wl_index].attribute = strdup(attribute);
+			write_log[wl_index].value = strdup(buf);
+			wl_index++;
+		}
+	}
 
-	ret = iio_channel_attr_write(chan, attribute, buffer);
-	if (ret < 0) {
-		printf("write '%s' failed to %s:%s:%s\n", buffer, device, channel, attribute);
-		iio_context_destroy(ctx);
-		return false;
+	if (buffer) {
+		ret = iio_channel_attr_write(chan, attribute, buffer);
+		if (ret < 0) {
+			printf("write '%s' failed to %s:%s:%s\n", buffer, device, channel, attribute);
+			iio_context_destroy(ctx);
+			return false;
+		}
 	}
 	return true;
 
-}
-
-static ssize_t demux_sample(const struct iio_channel *chn,
-		void *sample, size_t size, void *d)
-{
-	const struct iio_data_format *format = iio_channel_get_data_format(chn);
-/*
-	if (size == 1) {
-		int8_t val;
-
-		iio_channel_convert(chn, &val, sample);
-		if (format->is_signed)
-			*() = (float) val;
-		else
-			*() = (float) (uint8_t)val;
-	} else if (size == 2) {
-		int16_t val;
-
-		iio_channel_convert(chn, &val, sample);
-		if (format->is_signed)
-			*() = (float) val;
-		else
-			*() = (float) (uint16_t)val;
-	} else {
-		int32_t val;
-
-		iio_channel_convert(chn, &val, sample);
-		if (format->is_signed)
-			*() = (float) val;
-		else
-			*() = (float) (uint32_t)val;
-	}
-*/
-	return size;
 }
 
 static double win_hanning(int j, int n)
@@ -310,20 +299,56 @@ static double win_hanning(int j, int n)
 	return (w);
 }
 
+static double lo_frequency (uint32_t xo)
+{
+	uint32_t tmp1, tmp2, tmp3;
+	double int_portion, fract_portion, vco_div;
+
+	/* registers are 8-bits*/
+	/* 0x231 is lower Rx synthesizer word */
+	iio_device_reg_read(iio_context_find_device(ctx, "ad9361-phy"), 0x231, &tmp1);
+	/* lower two bits in 0x232 are bits 10:8 */
+	iio_device_reg_read(iio_context_find_device(ctx, "ad9361-phy"), 0x232, &tmp2);
+	int_portion = ((tmp2 & 7) << 8) | tmp1;
+
+	iio_device_reg_read(iio_context_find_device(ctx, "ad9361-phy"), 0x233, &tmp1);
+	iio_device_reg_read(iio_context_find_device(ctx, "ad9361-phy"), 0x234, &tmp2);
+	iio_device_reg_read(iio_context_find_device(ctx, "ad9361-phy"), 0x235, &tmp3);
+	fract_portion = ((tmp3 & 0x7F) << 16) | (tmp2 << 8) | tmp1;
+
+	iio_device_reg_read(iio_context_find_device(ctx, "ad9361-phy"), 0x5, &tmp1);
+	vco_div = (tmp1 & 7);
+
+	if (xo < 41000000)
+		xo = xo * 2;
+
+	return ((xo * fract_portion) + (xo * int_portion * 8388593)) /
+			(pow(2, (vco_div + 1)) * 8388593);
+}
+
+#define IN false
+#define OUT true
 
 int main(int argc, char **argv)
 {
-	unsigned int i, nb_channels, rx_lo = 2000000000, tx_lo = 0, sample_rate = 30720000;
+	unsigned int i, nb_channels, tx_lo = 0,
+			sample_rate = 30720000;
+	uint64_t rx_lo = 0, external_tone = 0;
 	unsigned int buffer_size = SAMPLES_PER_READ;
-	int c, option_index = 0, arg_index = 0, ip_index = 0, uri_index = 0;
+	long long xo = 0;
+	int c, option_index = 0, arg_index = 0, uri_index = 0;
 	struct iio_device *dev;
-	struct iio_channel *chan;
 	size_t sample_size;
 	int timeout = -1;
 	bool scan_for_context = false;
 	char buf[256];
+	fftw_complex *in_c, *out;
+	fftw_plan plan_forward;
+	double *win, exact_rx_lo, mult_fs, mult_lo;
+	struct iio_channel *rx_i;
+	FILE * fd;
 
-	while ((c = getopt_long(argc, argv, "+hu:b:s:T:aS:r:t:",
+	while ((c = getopt_long(argc, argv, "+hu:b:s:T:aS:r:t:e:",
 					options, &option_index)) != -1) {
 		switch (c) {
 		case 'h':
@@ -355,11 +380,31 @@ int main(int argc, char **argv)
 			break;
 		case 'r':
 			arg_index += 2;
-			rx_lo = atoi(argv[arg_index]);
+			rx_lo = strtoll(argv[arg_index], NULL, 10);
+			if (tx_lo || external_tone) {
+				fprintf(stderr, "-e -r -t are not compatible\n");
+				return EXIT_FAILURE;
+			}
+			if (rx_lo >= 6000000000) {
+				fprintf(stderr, "rx_out of range\n");
+				return EXIT_FAILURE;
+			}
 			break;
 		case 't':
 			arg_index += 2;
 			tx_lo = atoi(argv[arg_index]);
+			if (rx_lo || external_tone) {
+				fprintf(stderr, "-e -r -t are not compatible\n");
+				return EXIT_FAILURE;
+			}
+			break;
+		case 'e':
+			arg_index += 2;
+			external_tone = strtoll(argv[arg_index], NULL, 10);
+			if (rx_lo || tx_lo) {
+				fprintf(stderr, "-e -r -t are not compatible\n");
+				return EXIT_FAILURE;
+			}
 			break;
 		case '?':
 			return EXIT_FAILURE;
@@ -372,6 +417,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Incorrect number of arguments.\n\n");
 		usage();
 		return EXIT_FAILURE;
+	}
+
+	if (!rx_lo && tx_lo) {
+		rx_lo = tx_lo;
+	}
+
+	if (!rx_lo && external_tone) {
+		rx_lo = external_tone - sample_rate/3;
 	}
 
 	setup_sig_handler();
@@ -391,42 +444,82 @@ int main(int argc, char **argv)
 	if (timeout >= 0)
 		iio_context_set_timeout(ctx, timeout);
 
-	sprintf(buf, "%u", rx_lo);
-	if (!iio_set_attribute("ad9361-phy", "RX_LO", "frequency", buf))
+	sprintf(buf, "%lu", rx_lo);
+	if (!iio_set_attribute("ad9361-phy", "RX_LO", OUT, "frequency", buf, true))
 		return EXIT_FAILURE;
+	iio_channel_attr_read(
+			iio_device_find_channel(
+				iio_context_find_device(ctx, "ad9361-phy"),
+			"RX_LO", OUT),
+		"frequency", buf, sizeof(buf));
+	rx_lo = strtoll(buf, NULL, 10);
+
+	iio_device_attr_read_longlong(iio_context_find_device(ctx, "ad9361-phy"), "xo_correction", &xo);
+
+	exact_rx_lo=lo_frequency(xo);
+	mult_lo = exact_rx_lo / (double)xo;
+	mult_fs = sample_rate / (double)xo;
+
 	sprintf(buf, "%u", sample_rate);
-	if (!iio_set_attribute("ad9361-phy", "voltage0", "sampling_frequency", buf))
+	if (!iio_set_attribute("ad9361-phy", "voltage0", OUT, "sampling_frequency", buf, true))
 		return EXIT_FAILURE;
+	if (!iio_set_attribute("ad9361-phy", "voltage0", IN, "gain_control_mode", "slow_attack", true))
+		return EXIT_FAILURE;
+
+	rx_i = iio_device_find_channel(iio_context_find_device(ctx, "cf-ad9361-lpc"), "voltage0", 0);
+
 	if (tx_lo) {
 		sprintf(buf, "%u", tx_lo);
-		if (!iio_set_attribute("ad9361-phy", "TX_LO", "powerdown", "0") ||
-		    !iio_set_attribute("ad9361-phy", "TX_LO", "frequency", buf))
+		if (!iio_set_attribute("ad9361-phy", "TX_LO", OUT, "powerdown", "0", true) ||
+		    !iio_set_attribute("ad9361-phy", "TX_LO", OUT, "frequency", buf, true))
 			return EXIT_FAILURE;
 		sprintf(buf, "%u", sample_rate / 3);
-		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", "frequency" , buf) ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", "frequency" , buf) ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", "frequency" , buf) ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", "frequency" , buf))
+		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", OUT, "frequency" , buf, true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", OUT, "frequency" , buf, true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", OUT, "frequency" , buf, true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", OUT, "frequency" , buf, true))
 			return EXIT_FAILURE;
-		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", "scale" , "0.4") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", "scale" , "0.4") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", "scale" , "0.4") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", "scale" , "0.4"))
+		else {
+			iio_channel_attr_read(
+					iio_device_find_channel(
+						iio_context_find_device(ctx, "cf-ad9361-dds-core-lpc"),
+						"TX1_I_F1", OUT),
+					"frequency", buf, sizeof(buf));
+			printf("got %s\n", buf);
+		}
+		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", OUT, "scale" , "0.4", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", OUT, "scale" , "0.4", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", OUT, "scale" , "0.4", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", OUT, "scale" , "0.4", true))
 			return EXIT_FAILURE;
-		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", "phase" , "90000") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", "phase" , "90000") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", "phase" , "0") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", "phase" , "0"))
+		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", OUT, "phase" , "90000", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", OUT, "phase" , "90000", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", OUT, "phase" , "0", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", OUT, "phase" , "0", true))
 			return EXIT_FAILURE;
-		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", "raw" , "1") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", "raw" , "1") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", "raw" , "1") ||
-		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", "raw" , "1"))
+		if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", OUT, "raw" , "1", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", OUT, "raw" , "1", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", OUT, "raw" , "1", true) ||
+		    !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", OUT, "raw" , "1", true))
 			return EXIT_FAILURE;
 	} else {
-		if (!iio_set_attribute("ad9361-phy", "TX_LO", "powerdown", "1"))
+		if (!iio_set_attribute("ad9361-phy", "TX_LO", OUT, "powerdown", "1", true))
 			return EXIT_FAILURE;
 	}
+	/* pause for RSSI to stablize */
+	usleep (100000);
+	iio_channel_attr_read(
+			iio_device_find_channel(
+				iio_context_find_device(ctx, "ad9361-phy"),
+			"voltage0", false),
+		"rssi", buf, sizeof(buf));
+	i=atoi(buf);
+	if (i > 75) {
+		printf("signal too weak (rssi = %i), adjust transmitter\n", i);
+		quit_all(EXIT_FAILURE);
+	}
+	iio_device_attr_read(iio_context_find_device(ctx, "ad9361-phy"), "xo_correction", buf, sizeof(buf));
+	xo=atoi(buf);
 
 	dev = iio_context_find_device(ctx, "cf-ad9361-lpc");
 
@@ -454,14 +547,19 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	while (app_running) {
-		int ret = iio_buffer_refill(buffer);
-		double *win;
-		unsigned int j, fft_size, cnt, bin1, bin2;
-		fftw_complex *in_c, *out;
-		fftw_plan plan_forward;
-		float *in_data, *in_data_c, mag, peak1, peak2;
+	win = fftw_malloc(sizeof(double) * buffer_size);
+	in_c = fftw_malloc(sizeof(fftw_complex) * buffer_size);
+	out = fftw_malloc(sizeof(fftw_complex) * (buffer_size + 1));
+	plan_forward = fftw_plan_dft_1d(buffer_size, in_c, out, FFTW_FORWARD, FFTW_ESTIMATE);
+	for (i = 0; i < buffer_size; i ++)
+		win[i] = win_hanning(i, buffer_size);
 
+	while (app_running) {
+		int ret;
+		unsigned int j, k, cnt, bin[5];
+		double mag[5], peak[5], side[2];
+
+		ret = iio_buffer_refill(buffer);
 		if (ret < 0) {
 			if (app_running) {
 				char buf[256];
@@ -471,59 +569,105 @@ int main(int argc, char **argv)
 			break;
 		}
 
-		win = fftw_malloc(sizeof(double) * fft_size);
-		in_c = fftw_malloc(sizeof(fftw_complex) * fft_size);
-		out = fftw_malloc(sizeof(fftw_complex) * (fft_size + 1));
-		plan_forward = fftw_plan_dft_1d(fft_size, in_c, out, FFTW_FORWARD, FFTW_ESTIMATE);
-		for (i = 0; i < fft_size; i ++)
-			win[i] = win_hanning(i, fft_size);
-
 		/* If there are only the samples we requested, we don't need to
 		 * demux */
 		if (iio_buffer_step(buffer) == sample_size) {
-			void *start = iio_buffer_start(buffer);
-			size_t read_len, len = (intptr_t) iio_buffer_end(buffer)
-				- (intptr_t) start;
+			void *data, *end;
+			ptrdiff_t inc;
+			double actual_bin;
 
-			if (num_samples && len > num_samples * sample_size)
-				len = num_samples * sample_size;
+			end = iio_buffer_end(buffer);
+			inc = iio_buffer_step(buffer);
 
-			iio_buffer_foreach_sample(buffer, demux_sample, NULL);
+			for (cnt = 0, data = iio_buffer_first(buffer, rx_i); data < end; data += inc, cnt++) {
+				const int16_t real = ((int16_t*)data)[0]; // Real (I)
+				const int16_t imag = ((int16_t*)data)[1]; // Imag (Q)
 
-			/* normalization and scaling see fft_corr */
-			for (cnt = 0, i = 0; cnt < fft_size; cnt++) {
-				in_c[cnt] = in_data_c[i] * win[cnt] + I * in_data_c[i] * win[cnt];
-				i++;
+				in_c[cnt] = (real * win[cnt] + I * imag * win[cnt]) / 2048;
 			}
+
 			fftw_execute(plan_forward);
 
-			peak2 = peak1 = FLT_MAX;
-			bin2 = bin1 = 0;
+			for (j = 0; j <= 2; j++) {
+				peak[j] = -FLT_MAX;
+				bin[j] = 0;
+			}
 
-			for (i = 0; i < fft_size; ++i) {
-				mag = 10 * log10((creal(out[j]) * creal(out[j]) + cimag(out[j]) * cimag(out[j])) /
-						((unsigned long long)fft_size * fft_size));
-				if (mag > peak1) {
-					peak2 = peak1;
-					bin2 = bin1;
-					peak1 = mag;
-					bin1 = i;
+			fd = fopen("./dat.bin", "w");
+			for (i = 1; i < buffer_size; ++i) {
+				mag[2] = mag[1];
+				mag[1] = mag[0];
+				mag[0] = 10 * log10((creal(out[i]) * creal(out[i]) + cimag(out[i]) * cimag(out[i])) /
+						((unsigned long long)buffer_size * (unsigned long long)buffer_size));
+				fprintf(fd, "%f\n", mag[0]);
+				if (i < 2)
+					continue;
+				for (j = 0; j <= 2; j++) {
+					if  ((mag[1] > peak[j]) &&
+							((!((mag[2] > mag[1]) && (mag[1] > mag[0]))) &&
+							 (!((mag[2] < mag[1]) && (mag[1] < mag[0]))))) {
+						for (k = 2; k > j; k--) {
+							peak[k] = peak[k - 1];
+							bin[k] = bin[k - 1];
+						}
+						peak[j] = mag[1];
+						bin[j] = i - 1;
+						if (j == 0) {
+							side[0] = mag[0];
+							side[1] = mag[2];
+						}
+						break;
+					}
 				}
 			}
+			fclose(fd);
 
-			printf("peaks at %d (%i) and %d (%i)\n", peak2, bin2, peak1, bin1);
+			printf("peaks at ");
+			for (j = 0; j <= 2; j++) 
+				printf("%f (%i); ", peak[j], bin[j]);
+			printf("\nSFDR = %f\n", peak[0] - peak[1]);
 
-			if (num_samples) {
-				num_samples -= read_len / sample_size;
-				if (!num_samples)
-					quit_all(EXIT_SUCCESS);
+			if (peak[0] < (peak[1] + 20)) {
+				printf("can't find strong signal, fix signal source\n");
+				quit_all(EXIT_FAILURE);
 			}
-		} else {
+			/* based on
+			 * https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
+			 */
+			actual_bin = bin[0] + (side[0] - side[1])/(2.0 * (side[0] - 2*peak[0] + side[1]));
+			printf("reading : %f\n", actual_bin * sample_rate / buffer_size + exact_rx_lo);
+			printf("error   : %f\n", fabs((actual_bin * sample_rate / buffer_size + exact_rx_lo) -
+						(double)external_tone));
+
+			printf("guess : %lf\n", actual_bin);
+			/* fftw folds things, so:
+			 * sample 0 is LO, buffer_size/2 is +FS/2
+			 * (buffer_size/2)+1 is -FS/2, and buffer_size is LO
+			 */
+			if (bin[0] < (buffer_size/2)) {
+				double ppm;
+
+				ppm = (double)(external_tone * buffer_size) /
+					(xo * (mult_fs * actual_bin + mult_lo * buffer_size));
+				printf("error = %2.4f ppm\n", (1-ppm) * 1000000);
+				printf("old xo : %lli\n", xo);
+				if (abs(1 - ppm) * 1000000 <= 25)
+					xo = (int)round(xo * ppm);
+				else
+					printf("calculated ppm value too high %f\n", (1 - ppm) * 1000000);
+				printf("new xo : %lli\n", xo);
+			} else {
+			}
+			iio_device_attr_write_longlong(iio_context_find_device(ctx, "ad9361-phy"), "xo_correction", xo);
 //			iio_buffer_foreach_sample(buffer, print_sample, NULL);
 		}
+		app_running = false;
 	}
 
-err_destroy_buffer:
+	for (c = wl_index - 1; c >= 0; c--) {
+		iio_set_attribute(write_log[c].device, write_log[c].channel, write_log[c].in_out,
+				write_log[c].attribute, write_log[c].value, false);
+	}
 	iio_buffer_destroy(buffer);
 	iio_context_destroy(ctx);
 	return exit_code;
