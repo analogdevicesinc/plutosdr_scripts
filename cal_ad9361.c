@@ -18,9 +18,6 @@
 #include <complex.h>
 #include <fftw3.h>
 
-
-#define MY_NAME "cal_ad9361"
-
 #define SAMPLES_PER_READ 1048576
 
 static const struct option options[] = {
@@ -52,12 +49,12 @@ static const char *options_descriptions[] = {
 	"Save captured data to a file.",
 };
 
-static void usage(void)
+static void usage(const char *name)
 {
 	unsigned int i;
 
-	printf("Usage:\n\t" MY_NAME "[-T <timeout-ms>] [-b <buffer-size>] [-s <samples>] "
-			"<iio_device> [<channel> ...]\n\nOptions:\n");
+	printf("Usage:\n\t %s [-T <timeout-ms>] [-b <buffer-size>] [-s <samples>] "
+			"<iio_device> [<channel> ...]\n\nOptions:\n", name);
 	for (i = 0; options[i].name; i++)
 		printf("\t-%c, --%s\n\t\t\t%s\n",
 					options[i].val, options[i].name,
@@ -354,7 +351,7 @@ int main(int argc, char **argv)
 					options, &option_index)) != -1) {
 		switch (c) {
 		case 'h':
-			usage();
+			usage(argv[0]);
 			return EXIT_SUCCESS;
 		case 'f':
 			arg_index += 1;
@@ -421,7 +418,7 @@ int main(int argc, char **argv)
 
 	if (arg_index >= argc) {
 		fprintf(stderr, "Incorrect number of arguments.\n\n");
-		usage();
+		usage(argv[0]);
 		return EXIT_FAILURE;
 	}
 
