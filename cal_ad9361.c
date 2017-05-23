@@ -34,6 +34,7 @@ static const struct option options[] = {
 	{"external-tone", required_argument, 0, 'e'},
 	{"timeout", required_argument, 0, 'T'},
 	{"auto", no_argument, 0, 'a'},
+	{"data-file", no_argument, 0, 'f'},
 	{0, 0, 0, 0},
 };
 
@@ -48,6 +49,7 @@ static const char *options_descriptions[] = {
 	"External Tone in Hz. Default is 0. 0 is off"
 	"Buffer timeout in milliseconds. 0 = no timeout",
 	"Scan for available contexts and if only one is available use it.",
+	"Save captured data to a file.",
 };
 
 static void usage(void)
@@ -340,20 +342,24 @@ int main(int argc, char **argv)
 	struct iio_device *dev;
 	size_t sample_size;
 	int timeout = -1;
-	bool scan_for_context = false;
+	bool scan_for_context = false, save_data = false;
 	char buf[256];
 	fftw_complex *in_c, *out;
 	fftw_plan plan_forward;
 	double *win, exact_rx_lo, mult_fs, mult_lo;
 	struct iio_channel *rx_i;
-	FILE * fd;
+	FILE * fd = NULL;
 
-	while ((c = getopt_long(argc, argv, "+hu:b:s:T:aS:r:t:e:",
+	while ((c = getopt_long(argc, argv, "+hfu:b:s:T:aS:r:t:e:",
 					options, &option_index)) != -1) {
 		switch (c) {
 		case 'h':
 			usage();
 			return EXIT_SUCCESS;
+		case 'f':
+			arg_index += 1;
+			save_data = true;
+			break;
 		case 'u':
 			arg_index += 2;
 			uri_index = arg_index;
@@ -571,7 +577,7 @@ int main(int argc, char **argv)
 
 		/* If there are only the samples we requested, we don't need to
 		 * demux */
-		if (iio_buffer_step(buffer) == sample_size) {
+		if (iio_buffer_step(buffer) == (ptrdiff_t)sample_size) {
 			void *data, *end;
 			ptrdiff_t inc;
 			double actual_bin;
@@ -593,13 +599,16 @@ int main(int argc, char **argv)
 				bin[j] = 0;
 			}
 
-			fd = fopen("./dat.bin", "w");
+			if (save_data)
+				fd = fopen("./dat.bin", "w");
+
 			for (i = 1; i < buffer_size; ++i) {
 				mag[2] = mag[1];
 				mag[1] = mag[0];
 				mag[0] = 10 * log10((creal(out[i]) * creal(out[i]) + cimag(out[i]) * cimag(out[i])) /
 						((unsigned long long)buffer_size * (unsigned long long)buffer_size));
-				fprintf(fd, "%f\n", mag[0]);
+				if (fd)
+					fprintf(fd, "%f\n", mag[0]);
 				if (i < 2)
 					continue;
 				for (j = 0; j <= 2; j++) {
@@ -620,7 +629,9 @@ int main(int argc, char **argv)
 					}
 				}
 			}
-			fclose(fd);
+			if (fd)
+				fclose(fd);
+			fd = NULL;
 
 			printf("peaks at ");
 			for (j = 0; j <= 2; j++) 
