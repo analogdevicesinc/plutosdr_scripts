@@ -35,7 +35,7 @@ static const struct option options[] = {
 	{"timeout", required_argument, 0, 'T'},
 	{"auto", no_argument, 0, 'a'},
 	{"data-file", no_argument, 0, 'f'},
-	{0, 0, 0, 0},
+	{ NULL, no_argument, NULL, 0 }
 };
 
 static const char *options_descriptions[] = {
@@ -46,7 +46,7 @@ static const char *options_descriptions[] = {
 	"Sample rate. Default is 30720000.",
 	"Rx LO frequency in Hz. Default is 0. 0 is off",
 	"Tx LO frequency in Hz. Default is 0. 0 is off",
-	"External Tone in Hz. Default is 0. 0 is off"
+	"External Tone in Hz. Default is 0. 0 is off",
 	"Buffer timeout in milliseconds. 0 = no timeout",
 	"Scan for available contexts and if only one is available use it.",
 	"Save captured data to a file.",
