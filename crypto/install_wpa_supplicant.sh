@@ -22,6 +22,7 @@ rm libnl-3.3.0.tar.gz
 #install wpa_supplicant
 cd /usr/local/src
 #NEED TO REPLACE THIS WITH A DIFFERENT REPO NOT IN MY PRIVATE REPO
+rm -rf ./wpa_supplicant
 git clone https://github.com/emaclean-adi/wpa_supplicant.git
 cd wpa_supplicant
 cp ./wpa_supplicant.conf /etc/wpa_supplicant.conf
