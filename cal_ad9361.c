@@ -29,6 +29,7 @@ static const struct option options[] = {
 	{"rxlo-freq", required_argument, 0, 'r'},
 	{"txlo-freq", required_argument, 0, 't'},
 	{"external-tone", required_argument, 0, 'e'},
+	{"gps-pps", no_argument, 0, 'g'},
 	{"timeout", required_argument, 0, 'T'},
 	{"auto", no_argument, 0, 'a'},
 	{"data-file", no_argument, 0, 'f'},
@@ -334,12 +335,12 @@ int main(int argc, char **argv)
 			sample_rate = 30720000;
 	uint64_t rx_lo = 0, external_tone = 0;
 	unsigned int buffer_size = SAMPLES_PER_READ;
-	long long xo = 0;
+	long long xo = 0, new_xo = 0;
 	int c, option_index = 0, arg_index = 0, uri_index = 0;
 	struct iio_device *dev;
 	size_t sample_size;
 	int timeout = -1;
-	bool scan_for_context = false, save_data = false;
+	bool scan_for_context = false, save_data = false, gps = false;
 	char buf[256];
 	fftw_complex *in_c, *out;
 	fftw_plan plan_forward;
@@ -347,7 +348,7 @@ int main(int argc, char **argv)
 	struct iio_channel *rx_i;
 	FILE * fd = NULL;
 
-	while ((c = getopt_long(argc, argv, "+hfu:b:s:T:aS:r:t:e:",
+	while ((c = getopt_long(argc, argv, "+hfu:b:s:T:aS:r:t:e:g",
 					options, &option_index)) != -1) {
 		switch (c) {
 		case 'h':
@@ -409,6 +410,10 @@ int main(int argc, char **argv)
 				return EXIT_FAILURE;
 			}
 			break;
+		case 'g':
+			arg_index += 1;
+			gps = true;
+			break;
 		case '?':
 			return EXIT_FAILURE;
 		}
@@ -446,6 +451,48 @@ int main(int argc, char **argv)
 
 	if (timeout >= 0)
 		iio_context_set_timeout(ctx, timeout);
+
+        if (gps) {
+		long long val = 0;
+		int ret;
+		struct iio_device *dev;
+		struct iio_channel *pps;
+		dev = iio_context_find_device(ctx, "cf-ad9361-lpc");
+		if (!dev) {
+			printf("no device cf-ad9361-lpc\n");
+			return EXIT_FAILURE;
+		}
+		pps = iio_device_find_channel(dev, "voltage0", 0);
+		if (!pps) {
+			printf("no channel voltage0\n");
+			return EXIT_FAILURE;
+		}
+		sprintf(buf, "%u", sample_rate);
+		if (!iio_set_attribute("ad9361-phy", "voltage0", OUT,
+				"sampling_frequency", buf, true))
+			return EXIT_FAILURE;
+		ret = iio_channel_attr_read_longlong(pps, "in_voltage_samples_pps", &val);
+		if (ret) {
+			printf("no in_voltage_samples_pps\n");
+			return EXIT_FAILURE;
+		}
+
+		iio_device_attr_read_longlong(iio_context_find_device(ctx, "ad9361-phy"), "xo_correction", &xo);
+		printf("pps: %llu (%f ppm off) xo was: %llu ", val, (double)(val - sample_rate)/(double)sample_rate * 1e6, xo);
+		new_xo = (long long)((double)(1.0 + (double)(val - sample_rate)/(double)sample_rate) * xo);
+		if (xo == new_xo) {
+			printf("\n");
+		} else {
+			printf("now %llu\n", new_xo);
+			iio_device_attr_write_longlong(
+				iio_context_find_device(ctx, "ad9361-phy"),
+				"xo_correction", new_xo);
+		}
+		sleep(2);
+		quit_all(SIGTERM);
+		return EXIT_SUCCESS;
+	}
+
 
 	sprintf(buf, "%lu", rx_lo);
 	if (!iio_set_attribute("ad9361-phy", "RX_LO", OUT, "frequency", buf, true))
