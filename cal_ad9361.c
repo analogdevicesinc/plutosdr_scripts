@@ -3,6 +3,8 @@
  * Author: Paul Cercueil <paul.cercueil@analog.com>
  *         Robin Getz <robin.getz@analog.com>
  *
+ * Licensed under the GPL-2.
+ *
  * */
 
 #include <errno.h>
