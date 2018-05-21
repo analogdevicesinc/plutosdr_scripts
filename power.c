@@ -53,8 +53,8 @@ static const char *options_descriptions[] = {
     "Set DDS tone frequency in Hz.",
     "Set RX gain in dB.",
     "Set TX gain in dB.",
-    "Set LO frequency in GHz.",
-    "Set sampling frequency in MHz.",
+    "Set LO frequency in Hz.",
+    "Set sampling frequency in Hz.",
 };
 
 static void usage(void)
