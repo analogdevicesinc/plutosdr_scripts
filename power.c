@@ -53,16 +53,16 @@ static const char *options_descriptions[] = {
     "Set DDS tone frequency in Hz.",
     "Set RX gain in dB.",
     "Set TX gain in dB.",
-    "Set LO frequency in Hz.",
-    "Set sampling frequency in Hz.",
+    "Set LO frequency in MHz.",
+    "Set sampling frequency in MHz.",
 };
 
 static void usage(void)
 {
     unsigned int i;
 
-    printf("Usage:\n\t" MY_NAME " -d 10000 -t -10 -r 10\n\t"
-					 "\nMeasure power from DDS at a specific frequency in loopback\n"
+    printf("Usage:\n\t" MY_NAME " -d 10000 -t -10 -r 10 -l 1000 -f 20\n\t"
+           "\nMeasure power from DDS at a specific frequency in loopback\n"
            "\nOptions:\n");
     for (i = 0; options[i].name; i++)
         printf("\t-%c, --%s\n\t\t\t%s\n",
@@ -296,8 +296,8 @@ int main (int argc, char **argv)
     int32_t dds_freq_hz = 10000;
     int16_t txgain = -10;
     int16_t rxgain = 10;
-    int32_t lo_ghz = 2.4;
-    int32_t fs_mhz = 2.5;
+    long lo_mhz = 2400;
+    long fs_mhz = 20;
 
     int c, option_index = 0;
 
@@ -317,10 +317,10 @@ int main (int argc, char **argv)
             txgain = (int16_t) atoi(optarg);
             break;
         case 'l':
-            lo_ghz = (int32_t) atoi(optarg);
+            lo_mhz = (long) atoi(optarg);
             break;
         case 'f':
-            fs_mhz = (int32_t) atoi(optarg);
+            fs_mhz = (long) atoi(optarg);
             break;
         case '?':
             return -1;
@@ -347,18 +347,18 @@ int main (int argc, char **argv)
     // Listen to ctrl+c and ASSERT
     signal(SIGINT, handle_sig);
 
-		printf("\n\n\n");
-		printf("* Configuring transceiver at %f GHz (lo) %f MHz (fs) \n",lo_ghz/1000000000.0,fs_mhz/1000000.0);
+    printf("\n\n\n");
+    printf("* Configuring transceiver at %ld MHz (lo) %ld MHz (fs) \n",lo_mhz,fs_mhz);
     // RX stream config
-    rxcfg.bw_hz = HZ(fs_mhz);   // 2 MHz rf bandwidth
-    rxcfg.fs_hz = HZ(fs_mhz);   // 2.5 MS/s rx sample rate
-    rxcfg.lo_hz = HZ(lo_ghz); // 2.5 GHz rf frequency
+    rxcfg.bw_hz = MHZ(fs_mhz);   // 2 MHz rf bandwidth
+    rxcfg.fs_hz = MHZ(fs_mhz);   // 2.5 MS/s rx sample rate
+    rxcfg.lo_hz = MHZ(lo_mhz); // 2.5 GHz rf frequency
     rxcfg.rfport = "A_BALANCED"; // port A (select for rf freq.)
 
     // TX stream config
-    txcfg.bw_hz = HZ(fs_mhz); // 1.5 MHz rf bandwidth
-    txcfg.fs_hz = HZ(fs_mhz);   // 2.5 MS/s tx sample rate
-    txcfg.lo_hz = HZ(lo_ghz); // 2.5 GHz rf frequency
+    txcfg.bw_hz = MHZ(fs_mhz); // 1.5 MHz rf bandwidth
+    txcfg.fs_hz = MHZ(fs_mhz);   // 2.5 MS/s tx sample rate
+    txcfg.lo_hz = MHZ(lo_mhz); // 2.5 GHz rf frequency
     txcfg.rfport = "A"; // port A (select for rf freq.)
 
     // printf("* Acquiring IIO context\n");
