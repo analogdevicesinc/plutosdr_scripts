@@ -17,6 +17,7 @@ REM "%pInstallDir%\dfu-util.exe" -l || exit /b 1
 for /F %%i in ("%FILE%") do @set NAME=%%~nxi
 
 if %NAME%==pluto.dfu goto firmware
+if %NAME%==m2k.dfu goto firmware_m2k
 if %NAME%==uboot-env.dfu goto ubootenv
 goto help
 
@@ -24,11 +25,15 @@ goto help
 "%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674 -D %FILE% -a firmware.dfu
 exit /b 0
 
+:firmware_m2k
+"%pInstallDir%\dfu-util.exe" -d 0456:b672,0456:b675 -D %FILE% -a firmware.dfu
+exit /b 0
+
 :ubootenv
-"%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674 -D %FILE% -a uboot-env.dfu
+"%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674,0456:b672,0456:b675 -D %FILE% -a uboot-env.dfu
 exit /b 0
 
 :help
-echo PlutoSDR DFU update utility
-echo Usage: %0 PATH-TO\pluto.dfu
+echo PlutoSDR/M2k DFU update utility
+echo Usage: %0 PATH-TO\[pluto|m2k].dfu
 exit /b 0
