@@ -55,8 +55,6 @@ rxadc.channels[0].enabled = True
 rxadc.channels[1].enabled = True
 txdac.channels[0].enabled = True
 txdac.channels[1].enabled = True
-txdac.channels[4].enabled = True
-txdac.channels[5].enabled = True
 
 # Create buffer for RX data
 rxbuf = iio.Buffer(rxadc, 2**15, False)
