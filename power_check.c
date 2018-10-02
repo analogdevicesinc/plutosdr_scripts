@@ -1,7 +1,8 @@
 /*
- * Copyright (C) 2014,2017 Analog Devices, Inc.
+ * Copyright (C) 2014,2017,2018 Analog Devices, Inc.
  * Author: Paul Cercueil <paul.cercueil@analog.com>
  *         Robin Getz <robin.getz@analog.com>
+ *         Travis Collins <travis.collins@analog.com>
  *
  * Licensed under the GPL-2.
  *
@@ -23,13 +24,13 @@
 
 #define SAMPLES_PER_READ 1048576
 
-#define TONE_FREQUENCY 10000000
+#define TONE_FREQUENCY 3000000 // must be positive
 
 #define TOLERANCE_HZ 1000
 
-#define SFDR_REQUIREMENT 20
+#define SFDR_REQUIREMENT 40
 
-#define RSSI_REQUIREMENT 50
+#define RSSI_REQUIREMENT 44
 
 static const struct option options[] = {
     {"help", no_argument, 0, 'h'},
@@ -328,12 +329,12 @@ static double win_hanning(int j, int n)
 
 int main(int argc, char **argv)
 {
-    unsigned int i, rssi, nb_channels, tx_lo = 0,
-                                       sample_rate = 30720000;
-    uint64_t rx_lo = 0, external_tone = 0;
+    unsigned int i, rssi, nb_channels, sample_rate = 30720000;
+    uint64_t rx_lo = 0, tx_lo = 0, external_tone = 0;
     unsigned int buffer_size = SAMPLES_PER_READ;
     long long xo = 0;
-    int c, c1, c2, c3, option_index = 0, arg_index = 0, uri_index = 0;
+    int c, c1, c2, c3, true_tone_freq, option_index = 0, arg_index = 0,
+                                       uri_index = 0;
     struct iio_device *dev;
     size_t sample_size;
     int timeout = -1;
@@ -342,6 +343,7 @@ int main(int argc, char **argv)
     fftw_complex *in_c, *out;
     fftw_plan plan_forward;
     double *win;
+    double error = 0;
     struct iio_channel *rx_i;
     FILE * fd = NULL;
 
@@ -389,7 +391,7 @@ int main(int argc, char **argv)
             break;
         case 't':
             arg_index += 2;
-            tx_lo = atoi(argv[arg_index]);
+            tx_lo = strtoll(argv[arg_index], NULL, 10);
             if (rx_lo || external_tone) {
                 fprintf(stderr, "-e -r -t are not compatible\n");
                 return EXIT_FAILURE;
@@ -460,19 +462,22 @@ int main(int argc, char **argv)
                            true))
         return EXIT_FAILURE;
     if (!iio_set_attribute("ad9361-phy", "voltage0", IN, "gain_control_mode",
-                           "slow_attack", true))
+                           "manual", true))
+        return EXIT_FAILURE;
+    if (!iio_set_attribute("ad9361-phy", "voltage0", IN, "hardwaregain",
+                           "0", false))
         return EXIT_FAILURE;
 
     rx_i = iio_device_find_channel(iio_context_find_device(ctx, "cf-ad9361-lpc"),
                                    "voltage0", 0);
 
     printf("**** Setup TX\n");
-    sprintf(buf, "%u", tx_lo);
+    sprintf(buf, "%llu", tx_lo);
     if (!iio_set_attribute("ad9361-phy", "TX_LO", OUT, "powerdown", "0", true) ||
         !iio_set_attribute("ad9361-phy", "TX_LO", OUT, "frequency", buf, true))
         return EXIT_FAILURE;
     // sprintf(buf, "%u", sample_rate / 3);
-    sprintf(buf, "%d", 3000000);
+    sprintf(buf, "%d", TONE_FREQUENCY);
     if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", OUT, "frequency",
                            buf, true) ||
         !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", OUT, "frequency", buf,
@@ -488,7 +493,7 @@ int main(int argc, char **argv)
                 iio_context_find_device(ctx, "cf-ad9361-dds-core-lpc"),
                 "TX1_I_F1", OUT),
             "frequency", buf, sizeof(buf));
-        printf("got %s\n", buf);
+        true_tone_freq = atoi(buf);
     }
     if (!iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F1", OUT, "scale",
                            "0.4", true) ||
@@ -506,7 +511,7 @@ int main(int argc, char **argv)
         !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_I_F2", OUT, "phase", "90000",
                            true) ||
         !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F1", OUT, "phase",
-                           "180000",// Set to 0 to make tone positive
+                           "0",// Set to 0 to make tone positive, 180000 for negative
                            true) ||
         !iio_set_attribute("cf-ad9361-dds-core-lpc", "TX1_Q_F2", OUT, "phase", "0",
                            true))
@@ -521,12 +526,8 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
 
     if (!iio_set_attribute("ad9361-phy", "voltage0", OUT, "hardwaregain",
-                           "-20", false))
+                           "-40", false))
         return EXIT_FAILURE;
-
-
-
-
 
     /* pause for RSSI to stablize */
     usleep (100000);
@@ -676,8 +677,9 @@ int main(int argc, char **argv)
             if (actual_bin>(buffer_size/2+1))
                 actual_bin = actual_bin - buffer_size;
 
-            printf("Peak Frequency : %lf (+/- %f)\n",
-                   actual_bin*sample_rate/buffer_size,(float)sample_rate/buffer_size);
+            error = fabs((actual_bin*sample_rate/buffer_size) - (double)true_tone_freq);
+            printf("Peak Frequency : %lf Hz (Error %f Hz)\n",
+                   actual_bin*sample_rate/buffer_size, error);
 
             // Read RSSI
             iio_channel_attr_read(
@@ -686,11 +688,10 @@ int main(int argc, char **argv)
                     "voltage0", false),
                 "rssi", buf, sizeof(buf));
             rssi=atoi(buf);
-            printf("RSSI: %u\n",rssi);
+            printf("RSSI: %u dB\n",rssi);
 
             // Checks
-            c1 =  fabs((actual_bin*sample_rate/buffer_size) - TONE_FREQUENCY) >
-                  TOLERANCE_HZ;  // Frequency Accuracy (Hz)
+            c1 =  error < TOLERANCE_HZ;  // Frequency Accuracy (Hz)
             c2 = peak[0] > (peak[1] + SFDR_REQUIREMENT); // SFDR (dBFS)
             c3 = (rssi < RSSI_REQUIREMENT);
             if (c1 && c2 && c3) {
