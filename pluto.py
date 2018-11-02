@@ -41,14 +41,20 @@ txdac = ctx.find_device("cf-ad9361-dds-core-lpc")
 rxadc = ctx.find_device("cf-ad9361-lpc")
 
 # Configure transceiver settings
-ctrl.channels[0].attrs["frequency"].value = str(int(RXLO))
-ctrl.channels[1].attrs["frequency"].value = str(int(TXLO))
-ctrl.channels[4].attrs["rf_bandwidth"].value = str(int(RXBW))
-ctrl.channels[5].attrs["rf_bandwidth"].value = str(int(TXBW))
-ctrl.channels[4].attrs["sampling_frequency"].value = str(int(RXFS))
-ctrl.channels[5].attrs["sampling_frequency"].value = str(int(TXFS))
-ctrl.channels[4].attrs['gain_control_mode'].value = 'slow_attack'
-ctrl.channels[5].attrs['hardwaregain'].value = '-30'
+rxLO = ctrl.find_channel("altvoltage0", True)
+rxLO.attrs["frequency"].value = str(int(RXLO))
+txLO = ctrl.find_channel("altvoltage1", True)
+txLO.attrs["frequency"].value = str(int(TXLO))
+
+tx = ctrl.find_channel("voltage0",True)
+tx.attrs["rf_bandwidth"].value = str(int(RXBW))
+tx.attrs["sampling_frequency"].value = str(int(RXFS))
+tx.attrs['hardwaregain'].value = '-30'
+
+rx = ctrl.find_channel("voltage0")
+rx.attrs["rf_bandwidth"].value = str(int(TXBW))
+rx.attrs["sampling_frequency"].value = str(int(TXFS))
+rx.attrs['gain_control_mode'].value = 'slow_attack'
 
 # Enable all IQ channels
 rxadc.channels[0].enabled = True
