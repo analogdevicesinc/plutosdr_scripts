@@ -57,21 +57,25 @@ rx.attrs["sampling_frequency"].value = str(int(TXFS))
 rx.attrs['gain_control_mode'].value = 'slow_attack'
 
 # Enable all IQ channels
-rxadc.channels[0].enabled = True
-rxadc.channels[1].enabled = True
+v0 = rxadc.find_channel("voltage0")
+v1 = rxadc.find_channel("voltage1")
+v0.enabled = True
+v1.enabled = True
 
 # Create buffer for RX data
 rxbuf = iio.Buffer(rxadc, 2**15, False)
 
 # Enable single tone DDS
-txdac.channels[0].attrs['raw'].value = str(1)
-txdac.channels[0].attrs['frequency'].value = str(100000)
-txdac.channels[0].attrs['scale'].value = str(0.9)
-txdac.channels[0].attrs['phase'].value = str(90000)
-txdac.channels[2].attrs['raw'].value = str(1)
-txdac.channels[2].attrs['frequency'].value = str(100000)
-txdac.channels[2].attrs['scale'].value = str(0.9)
-txdac.channels[2].attrs['phase'].value = str(0)
+dds0 = txdac.find_channel('altvoltage0',True)
+dds2 = txdac.find_channel('altvoltage2',True)
+dds0.attrs['raw'].value = str(1)
+dds0.attrs['frequency'].value = str(100000)
+dds0.attrs['scale'].value = str(0.9)
+dds0.attrs['phase'].value = str(90000)
+dds2.attrs['raw'].value = str(1)
+dds2.attrs['frequency'].value = str(100000)
+dds2.attrs['scale'].value = str(0.9)
+dds2.attrs['phase'].value = str(0)
 
 # Collect data
 reals = np.array([])
