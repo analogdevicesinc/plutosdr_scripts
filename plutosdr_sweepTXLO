@@ -1,0 +1,81 @@
+#!/bin/sh
+
+# sweep the Pluto LO with a tone
+
+while [ -n "$1" ]; do
+  case "$1" in
+    -s) s="$2"
+	shift
+	;;
+    -e) e="$2"
+	shift
+	;;
+    -i) inc="$2"
+	shift
+	;;
+    -g) g="$2"
+	shift
+	;;
+    -d) d="$2"
+	shift
+	;;
+    -?) echo "plutosdr-sweep\n  options:\n   -s: start frequency\n   -e: end frequency"
+	echo "   -i: increment frequency\n   -g: tx gain\n   -d: delay between changes"
+	exit
+  esac
+  shift
+done
+
+ 
+# Find the range
+r=$(iio_attr -a -q -c ad9361-phy TX_LO frequency_available | tail -1 | sed -e 's:\[::g' -e 's:\]::g')
+s_c=$(echo $r| awk '{print $1}')
+e_c=$(echo $r| awk '{print $3}')
+if [ -z "$s" ] ; then
+  s=${s_c}
+fi
+if [ -z "$e" ] ; then
+  e=${e_c}
+fi
+if [ "$s" -gt "$e" ] ; then
+  echo starting frequency $s must be less than end frequency $e
+  exit
+fi
+if [ "$s" -lt "$s_c" ] ; then
+  echo start frequency $s too low, capable of $s_c
+  exit
+fi
+if [ "$e_c" -lt "$e" ] ; then
+  echo end frequency $e too high, capable of $e_c
+  exit
+fi
+if [ -z "$g" ] ; then
+  g=$(iio_attr -a -q -c -o ad9361-phy voltage0 hardwaregain  | tail -1 | awk '{print $1}')
+fi
+if [ -z "$inc" ] ; then
+  inc=$(expr \( $e - $s \) \/ 1024)
+fi
+if [ -z "$d" ] ; then
+  d=0.1
+fi
+
+echo start $s to end $e in $inc increments with gain $g
+
+# sample rate 30.72 MSPS
+iio_attr -a -q -c ad9361-phy voltage0 sampling_frequency 30720000
+
+# set the DDS to full scale
+iio_attr -a -q -c cf-ad9361-dds-core-lpc TX1_I_F1 frequency 1000000
+iio_attr -a -q -c cf-ad9361-dds-core-lpc TX1_Q_F1 frequency 1000000
+iio_attr -a -q -c cf-ad9361-dds-core-lpc TX1_I_F1 scale 0.707947
+iio_attr -a -q -c cf-ad9361-dds-core-lpc TX1_Q_F1 scale 0.707947
+
+#set the Tx attenuation
+iio_attr -a -q -c -o ad9361-phy voltage0 hardwaregain $g
+
+for i in $(seq $s $inc $e)
+do
+	sleep $d
+	echo $i | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta'
+	iio_attr -a -q -c ad9361-phy TX_LO frequency $i >/dev/null
+done
