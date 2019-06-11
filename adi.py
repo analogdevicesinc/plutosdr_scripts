@@ -23,10 +23,9 @@ class Pluto:
               self.ctx = iio.Context(self.uri)
           else:
               contexts = iio.scan_contexts()
-              if len(contexts) > 0:
-                  for uri in contexts:
-                      if 'PlutoSDR' in contexts[uri]:
-                          self.ctx = iio.Context(uri)
+              for uri in contexts:
+                  if 'PlutoSDR' in contexts[uri]:
+                      self.ctx = iio.Context(uri)
               if self.ctx==None:
                   raise Exception()
       except:
