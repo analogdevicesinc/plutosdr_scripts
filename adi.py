@@ -11,16 +11,26 @@ except:
 
 class Pluto:
 
-  def __init__(self, uri='ip:192.168.2.1', rx_lo=1000000000, tx_lo=1000000000, \
+  def __init__(self, uri=None, rx_lo=1000000000, tx_lo=1000000000, \
     sample_rate=5000000, rx_rf_bandwidth=3000000, tx_rf_bandwidth=3000000, \
     rx_hardwaregain=30, tx_hardwaregain=-10, gain_control_mode='slow_attack'):
       self.uri = uri
 
-      # Initialize
+      # Initialize context
+      self.ctx = None
       try:
-          self.ctx = iio.Context(self.uri)
+          if uri:
+              self.ctx = iio.Context(self.uri)
+          else:
+              contexts = iio.scan_contexts()
+              if len(contexts) > 0:
+                  for uri in contexts:
+                      if 'PlutoSDR' in contexts[uri]:
+                          self.ctx = iio.Context(uri)
+              if self.ctx==None:
+                  raise Exception()
       except:
-          print("No device found")
+          print("No PlutoSDR device found")
           sys.exit(0)
 
       self.ctrl = self.ctx.find_device("ad9361-phy")
