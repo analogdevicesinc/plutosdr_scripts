@@ -42,33 +42,33 @@ txdac = ctx.find_device("cf-ad9361-dds-core-lpc")
 rxadc = ctx.find_device("cf-ad9361-lpc")
 
 # Configure transceiver settings
-ctrl.channels[0].attrs["frequency"].value = str(int(RXLO))
-ctrl.channels[1].attrs["frequency"].value = str(int(TXLO))
-ctrl.channels[4].attrs["rf_bandwidth"].value = str(int(RXBW))
-ctrl.channels[5].attrs["rf_bandwidth"].value = str(int(TXBW))
-ctrl.channels[4].attrs["sampling_frequency"].value = str(int(RXFS))
-ctrl.channels[5].attrs["sampling_frequency"].value = str(int(TXFS))
-ctrl.channels[4].attrs['gain_control_mode'].value = 'slow_attack'
-ctrl.channels[5].attrs['hardwaregain'].value = '-30'
+ctrl.find_channel('RX_LO').attrs["frequency"].value = str(int(RXLO))
+ctrl.find_channel('TX_LO').attrs["frequency"].value = str(int(TXLO))
+ctrl.find_channel('voltage0').attrs["rf_bandwidth"].value = str(int(RXBW))
+ctrl.find_channel('voltage0',True).attrs["rf_bandwidth"].value = str(int(TXBW))
+ctrl.find_channel('voltage0').attrs["sampling_frequency"].value = str(int(RXFS))
+ctrl.find_channel('voltage0',True).attrs["sampling_frequency"].value = str(int(TXFS))
+ctrl.find_channel('voltage0').attrs['gain_control_mode'].value = 'slow_attack'
+ctrl.find_channel('voltage0',True).attrs['hardwaregain'].value = '-30'
 
 # Enable all IQ channels
-rxadc.channels[0].enabled = True
-rxadc.channels[1].enabled = True
-txdac.channels[4].enabled = True
-txdac.channels[5].enabled = True
+rxadc.find_channel("voltage0").enabled = True
+rxadc.find_channel("voltage1").enabled = True
+txdac.find_channel("voltage0",True).enabled = True
+txdac.find_channel("voltage1",True).enabled = True
 
-# Force DAC to use DMA not DDSs
-txdac.channels[0].attrs['raw'].value = str(0)
-txdac.channels[1].attrs['raw'].value = str(0)
-txdac.channels[2].attrs['raw'].value = str(0)
-txdac.channels[3].attrs['raw'].value = str(0)
+# Force DAC to use DMA not DDS
+txdac.find_channel('TX1_I_F1',True).attrs['raw'].value = str(0)
+txdac.find_channel('TX1_Q_F1',True).attrs['raw'].value = str(0)
+txdac.find_channel('TX1_I_F2',True).attrs['raw'].value = str(0)
+txdac.find_channel('TX1_Q_F2',True).attrs['raw'].value = str(0)
 
 # Create buffer for RX data
 rxbuf = iio.Buffer(rxadc, 2**15, False)
 
 # Create cyclic buffer for TX data
 N = 2**15
-txbuf = iio.Buffer(txdac, N/2, True)
+txbuf = iio.Buffer(txdac, int(N/2), True)
 
 # Create a sinewave waveform
 fc = 10000
