@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2018 Analog Devices, Inc.
+# Copyright (C) 2019 Analog Devices, Inc.
 # Author: Travis Collins <travis.collins@analog.com>
 #
 # Licensed under the GPL-2.
+
+# Triangle example: This example demonstrates how to verify data that is sent to the DMA
+# by using digital loopback and a triangle signal
 
 import sys
 import numpy as np
@@ -41,6 +44,8 @@ ctrl = ctx.find_device("ad9361-phy")
 txdac = ctx.find_device("cf-ad9361-dds-core-lpc")
 rxadc = ctx.find_device("cf-ad9361-lpc")
 
+ctrl.debug_attrs['loopback'].value = '1'
+
 # Configure transceiver settings
 ctrl.find_channel('RX_LO').attrs["frequency"].value = str(int(RXLO))
 ctrl.find_channel('TX_LO').attrs["frequency"].value = str(int(TXLO))
@@ -64,22 +69,21 @@ txdac.find_channel('TX1_I_F2',True).attrs['raw'].value = str(0)
 txdac.find_channel('TX1_Q_F2',True).attrs['raw'].value = str(0)
 
 # Create buffer for RX data
-rxbuf = iio.Buffer(rxadc, 2**15, False)
+rxbuf = iio.Buffer(rxadc, 2**12, False)
+
+# Create ramp
+N = 2**10 # Dont exceed 2**11-1
+a = np.int16(range(int(N)))
+a = np.concatenate((a, a[::-1]), axis=0)
+a = a << 4; # Shift to prevent interface core cast scale reduction
+iq = np.empty((a.size*2,), dtype=np.int16)
+iq[0::2] = a
+iq[1::2] = a
+iq = np.int16(iq)
 
 # Create cyclic buffer for TX data
-samples_per_channel = 2**15
+samples_per_channel = iq.size//2
 txbuf = iio.Buffer(txdac, samples_per_channel, True)
-
-# Create a sinewave waveform
-fc = 10000
-ts = 1/float(RXFS)
-t = np.arange(0, samples_per_channel*ts, ts)
-i = np.sin(2*np.pi*t*fc) * 2**14
-q = np.cos(2*np.pi*t*fc) * 2**14
-iq = np.empty((i.size + q.size,), dtype=i.dtype)
-iq[0::2] = i
-iq[1::2] = q
-iq = np.int16(iq)
 
 # Send data to buffer
 txbuf.write(bytearray(iq))
@@ -93,20 +97,13 @@ for k in range(10):
   rxbuf.refill()
   data = rxbuf.read()
   x = np.frombuffer(data,dtype=np.int16)
-  reals = np.append(reals,x[::2])
-  imags = np.append(imags,x[1::2])
+  reals = x[::2]
+  imags = x[1::2]
 
 # Plot
 if do_plots:
-    f, (ax1, ax2) = plt.subplots(1, 2, sharey=True)
-    ax1.plot(reals)
-    ax1.plot(imags)
-    ax1.set_xlabel("Samples")
-    ax1.set_ylabel("Amplitude [dbFS]")
-    ax1.set_title('Received')
-    ax2.plot(i)
-    ax2.plot(q)
-    ax2.set_xlabel("Samples")
-    ax2.set_ylabel("Amplitude")
-    ax2.set_title('Transmitted')
+    plt.plot(reals)
+    plt.plot(a >> 4)
+    plt.xlabel("Samples")
+    plt.ylabel("Amplitude")
     plt.show()
