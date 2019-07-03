@@ -1,0 +1,70 @@
+#!/bin/sh
+
+ssh_cmd()
+{
+  sshpass -v -panalog ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oCheckHostIP=no root@${ipaddr} "$1" 2>/dev/null
+  if [ "$?" -ne "0" ] ; then
+    echo ssh command $1 failed
+    exit
+  fi
+}
+
+pluto_dev()
+{
+  echo $(ls -l /dev/disk/by-label/ 2>/dev/null | grep PlutoSDR | awk -F/ ' {printf "%s", $NF}')
+}
+
+command sshpass >/dev/null 2>&1
+if [ "$?" -ne "0" ] ; then
+  echo sorry, your distribution needs to have 'sshpass' installed
+  echo try \'sudo apt-get install sshpass\' OR \'sudo yum install sshpass\'
+  exit
+fi
+
+command dfu-util -V >/dev/null 2>&1
+if [ "$?" -ne "0" ] ; then
+  echo sorry, your distribution needs to have 'dfu-util' installed
+  echo try \'sudo apt-get install dfu-util\' OR \'sudo yum install dfu-util\'
+  exit
+fi
+
+if [ "$#" -eq "1" ] ; then
+  dfu=$1
+else
+  dfu="./build/pluto.dfu"
+fi
+if [ ! -f ${dfu} ] ; then
+  echo can not find dfu file ${dfu}
+  exit
+fi
+if [ $(strings ${dfu} | grep PlutoSDR | wc -l) -lt "1" ] ; then
+  echo provided dfu file ${dfu} does not look like a PlutoSDR dfu
+  exit
+fi
+
+if [ "$(pluto_dev | wc -c)" -gt "1" ] ; then
+  dev=/dev/$(pluto_dev | sed -e 's:[0-9]$::')
+  disk=$(grep ${dev} /proc/mounts | awk '{print $2}')
+  ipaddr=$(grep "^ipaddr =" ${disk}/config.txt | awk '{print $NF}')
+  echo Found Pluto SDR at IP ${ipaddr}
+  ssh_cmd '/usr/sbin/pluto_reboot ram;'
+else
+  if [ "$(dfu-util -l -d 0456:b673,0456:b674 | wc -l)" -le "8" ] ; then
+    echo could not find pluto attached
+    exit
+  fi
+fi
+
+i=0
+while [ $i -le "9" ]
+do
+  if [ "$(dfu-util -l -d 0456:b673,0456:b674 | wc -l)" -gt "8" ] ; then
+    echo Found Pluto SDR in dfu mode and downloading ${dfu}
+    dfu-util -d 0456:b673,0456:b674 -D ./build/pluto.dfu -a firmware.dfu >/dev/null
+    dfu-util -d 0456:b673,0456:b674 -a firmware.dfu -e >/dev/null
+    echo successfully downloaded
+    exit
+  fi
+  sleep 1
+  i=$(expr $i + 1)
+done
