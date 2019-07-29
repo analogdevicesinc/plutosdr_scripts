@@ -9,3 +9,12 @@ Host plutosdr
 	CheckHostIP no
 	User root
 	ChallengeResponseAuthentication no
+
+# Do the same for zeroconf, so we don't end up with bad keys
+Host pluto.local
+        UserKnownHostsFile=/dev/null
+        HostKeyAlias plutosdr
+        StrictHostKeyChecking=no
+        CheckHostIP no
+        User root
+        ChallengeResponseAuthentication no
