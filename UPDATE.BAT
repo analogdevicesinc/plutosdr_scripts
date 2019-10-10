@@ -30,10 +30,10 @@ exit /b 0
 exit /b 0
 
 :ubootenv
-"%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674,0456:b672,0456:b675 -D %FILE% -a uboot-env.dfu
+"%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674 -D %FILE% -a uboot-env.dfu || "%pInstallDir%\dfu-util.exe" -d 0456:b672,0456:b675 -D %FILE% -a uboot-env.dfu
 exit /b 0
 
 :help
 echo PlutoSDR/M2k DFU update utility
-echo Usage: %0 PATH-TO\[pluto|m2k].dfu
+echo Usage: %0 PATH-TO\[pluto^|m2k].dfu
 exit /b 0
