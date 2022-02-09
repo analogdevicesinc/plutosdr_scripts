@@ -54,12 +54,12 @@ else
 fi
 
 while [ $i -ne 0 ] ; do
-  pluto_temp=$(iio_attr -q ${uri} -c ad9361-phy temp0 input)
+  pluto_temp=$(iio_attr ${uri} -c ad9361-phy temp0 input)
   pluto=$(awk "BEGIN {printf(\"%.1f\", ${pluto_temp} / 1000)}")
 
-  xadc_raw=$(iio_attr -q ${uri} -c xadc temp0 raw)
-  xadc_offset=$(iio_attr -q ${uri} -c xadc temp0 offset)
-  xadc_scale=$(iio_attr -q ${uri} -c xadc temp0 scale)
+  xadc_raw=$(iio_attr ${uri} -c xadc temp0 raw)
+  xadc_offset=$(iio_attr ${uri} -c xadc temp0 offset)
+  xadc_scale=$(iio_attr ${uri} -c xadc temp0 scale)
   xadc=$(awk "BEGIN {printf(\"%.1f\", (${xadc_raw} + ${xadc_offset}) * ${xadc_scale}/1000)}")
 
   echo "pluto: ${pluto} °C      zynq: ${xadc} °C"
