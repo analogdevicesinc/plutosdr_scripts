@@ -1,0 +1,81 @@
+#!/bin/bash
+#
+# This script updates all plutos it can find on the network
+#
+
+PASSWORD="analog"
+
+github_api() {
+	ret=$(curl -s $1)
+	if [ "$(echo ${ret} | grep "API rate limit exceeded" | wc -c)" -gt "5" ] ; then
+		echo github API exceeded, wait at least an hour before trying again
+		exit
+	fi
+	echo ${ret}
+}
+
+get_release() {
+	if [ ! -z "${FRM}" ] ; then
+		FRM=${FIRMWARE}
+		if [ ! -f ${FIRMWARE} ] ; then
+			wget "${URL}"
+		fi
+	fi
+	FILE=$(unzip -l "${FIRMWARE}" | grep frm | sort -nr | head -1 | awk '{print $NF}')
+	if [ ! -f ${FILE} ] ; then
+		unzip "${FIRMWARE}" "${FILE}"
+	fi
+}
+
+scp_cmd() {
+	sshpass -p${PASSWORD} scp -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oCheckHostIP=no ${FILE} root@${plutos}:/root/ 2>/dev/null
+	if [ "$?" -ne "0" ] ; then
+		echo scp command failed
+		exit
+	fi
+}
+
+ssh_cmd() {
+	sshpass -p${PASSWORD} ssh -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oCheckHostIP=no root@${plutos} "$1" 2>/dev/null
+	if [ "$?" -ne "0" ] ; then
+		echo ssh command $1 failed
+		exit
+	fi
+}
+
+command sshpass >/dev/null 2>&1
+if [ "$?" -ne "0" ] ; then
+	echo sorry, your distribution needs to have 'sshpass' installed
+	echo try \'sudo apt-get install sshpass\' OR \'sudo yum install sshpass\'
+	exit
+fi
+
+API=$(github_api https://api.github.com/repos/analogdevicesinc/plutosdr-fw/releases/latest;)
+VERSION=$(echo "${API}" | sed 's/",/"\n"/g' | grep "\"name\"" | head -1 | cut -d : -f 2,3 | tr -d \", | sed 's/^ //g')
+FIRMWARE=$(echo "${API}" | sed 's/",/"\n"/g' |  grep "name.*plutosdr-fw-" | cut -d : -f 2,3 | tr -d \", | sed 's/^ //g')
+URL=$(echo "${API}" | sed -e 's/",/"\n"/g' -e 's/},/}\n/g' | grep "browser_download_url.*plutosdr-fw-" | cut -d : -f 2,3 | awk '{print $1}' | tr -d \")
+if [ -f "${FIRMWARE}" ] ; then
+	FRM=${FIRMWARE}
+else
+	FRM=""
+fi
+echo Found ${VERSION} online
+FILE=""
+
+for plutos in $(iio_info -S ip | grep pluto | awk '{print $2}')
+do
+	ver=$(iio_attr -u ip:${plutos} -C fw_version | awk '{print $2}')
+	if [ ! "${ver}" = "${VERSION}" ] ; then
+		get_release
+		echo Found $plutos at ${ver}, will update
+		echo -e "\tcopy over file"
+		scp_cmd
+		echo -e "\tupdating"
+		ssh_cmd "update_frm.sh /root/${FILE}"
+		echo -e "\trebooting"
+		ssh_cmd "reboot"
+		echo ${plutos} up to date with ${VERSION}
+	else
+		echo ${plutos} up to date with ${VERSION}
+	fi
+done
