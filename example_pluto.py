@@ -1,4 +1,4 @@
-import adi
+import adi # pip install pyadi-iio
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -13,7 +13,6 @@ sdr.rx_lo = 2000000000
 print("RX LO %s" % (sdr.rx_lo))
 
 # Collect data
-sig = sdr.rx()
 sig = sdr.rx()
 plt.plot(np.real(sig))
 plt.plot(np.imag(sig))
