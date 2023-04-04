@@ -19,6 +19,7 @@ for /F %%i in ("%FILE%") do @set NAME=%%~nxi
 if %NAME%==pluto.dfu goto firmware
 if %NAME%==m2k.dfu goto firmware_m2k
 if %NAME%==uboot-env.dfu goto ubootenv
+if %NAME%==boot.dfu goto boot
 goto help
 
 :firmware
@@ -31,6 +32,10 @@ exit /b 0
 
 :ubootenv
 "%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674 -D %FILE% -a uboot-env.dfu || "%pInstallDir%\dfu-util.exe" -d 0456:b672,0456:b675 -D %FILE% -a uboot-env.dfu
+exit /b 0
+
+:boot
+"%pInstallDir%\dfu-util.exe" -d 0456:b673,0456:b674 -D %FILE% -a boot.dfu || "%pInstallDir%\dfu-util.exe" -d 0456:b672,0456:b675 -D %FILE% -a boot.dfu
 exit /b 0
 
 :help
